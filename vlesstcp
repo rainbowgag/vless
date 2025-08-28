@@ -5,6 +5,10 @@ apt install -y curl unzip jq
 # 安装/更新 Xray（官方安装器）
 bash <(curl -fsSL https://raw.githubusercontent.com/XTLS/Xray-install/main/install-release.sh) install
 
+# 让用户输入节点名称
+read -p "请输入节点名称(备注)： " NODENAME
+NODENAME=${NODENAME:-VLESS-TCP}  # 如果不输入，就默认 VLESS-TCP
+
 UUID=$(cat /proc/sys/kernel/random/uuid)
 PORT=$(shuf -i 20000-65000 -n1)
 
@@ -48,11 +52,23 @@ IPV4=$(curl -4 -fsS https://api.ipify.org || true)
 IPV6=$(curl -6 -fsS https://api64.ipify.org || true)
 IP=${IPV4:-$IPV6}
 
-LINK="vless://${UUID}@${IP}:${PORT}?encryption=none&security=none&type=tcp#VLESS-TCP"
+LINK="vless://${UUID}@${IP}:${PORT}?encryption=none&security=none&type=tcp#${NODENAME}"
 echo
 echo "================ VLESS 链接 ================"
 echo "$LINK"
 echo "==========================================="
 echo "配置文件：/usr/local/etc/xray/config.json"
 echo "日志：/var/log/xray/{access.log,error.log}"
+
+# 添加 vlesslink 命令，方便下次直接查看链接
+cat >/usr/local/bin/vlesslink <<EOFA
+#!/bin/bash
+UUID=\$(jq -r ".inbounds[0].settings.clients[0].id" /usr/local/etc/xray/config.json)
+PORT=\$(jq -r ".inbounds[0].port" /usr/local/etc/xray/config.json)
+IP=\$(curl -s ipv4.ip.sb || curl -s ipv6.ip.sb)
+NAME="$NODENAME"
+echo "vless://\${UUID}@\${IP}:\${PORT}?encryption=none&security=none&type=tcp#\${NAME}"
+EOFA
+
+chmod +x /usr/local/bin/vlesslink
 '
