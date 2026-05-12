@@ -1,6 +1,32 @@
-sudo bash -c 'set -euo pipefail
-apt update -y
-apt install -y curl unzip jq
+#!/bin/bash
+set -euo pipefail
+
+fix_apt_sources() {
+  echo "正在检查软件源..."
+
+  chmod 1777 /tmp || true
+
+  if apt update -y; then
+    return 0
+  fi
+
+  echo "apt update 失败，尝试修复失效软件源..."
+
+  cp -a /etc/apt/sources.list /etc/apt/sources.list.bak.$(date +%s) 2>/dev/null || true
+
+  sed -i '/bullseye-backports/d;/buster-backports/d;/stretch-backports/d' /etc/apt/sources.list 2>/dev/null || true
+
+  if [ -d /etc/apt/sources.list.d ]; then
+    grep -rilE 'bullseye-backports|buster-backports|stretch-backports' /etc/apt/sources.list.d \
+      | xargs -r sed -i '/bullseye-backports/d;/buster-backports/d;/stretch-backports/d'
+  fi
+
+  apt update -y
+}
+
+fix_apt_sources
+
+DEBIAN_FRONTEND=noninteractive apt install -y curl unzip jq
 
 # 安装 / 更新 Xray
 bash <(curl -fsSL https://raw.githubusercontent.com/XTLS/Xray-install/main/install-release.sh) install
@@ -9,13 +35,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/XTLS/Xray-install/main/insta
 read -p "请输入节点名称(备注) [默认: VLESS-TCP]: " NODENAME
 NODENAME=${NODENAME:-VLESS-TCP}
 
-# 让用户输入端口（默认 443）
+# 让用户输入端口
 read -p "请输入监听端口 [默认: 443]: " PORT
 PORT=${PORT:-443}
 
 UUID=$(cat /proc/sys/kernel/random/uuid)
 
-# 生成配置（VLESS TCP, 无 TLS）
+# 生成配置
 install -d /usr/local/etc/xray
 cat >/usr/local/etc/xray/config.json <<EOF
 {
@@ -52,7 +78,7 @@ cat >/usr/local/etc/xray/config.json <<EOF
 }
 EOF
 
-# 放行防火墙（如 UFW 已启用）
+# 放行防火墙
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw allow ${PORT}/tcp || true
 fi
@@ -61,10 +87,14 @@ fi
 systemctl enable xray >/dev/null 2>&1
 systemctl restart xray
 
-# 获取公网 IP（优先 IPv4）
+# 获取公网 IP
 IPV4=$(curl -4 -fsS https://api.ipify.org || true)
 IPV6=$(curl -6 -fsS https://api64.ipify.org || true)
 IP=${IPV4:-$IPV6}
+
+if [ -z "$IP" ]; then
+  IP="YOUR_SERVER_IP"
+fi
 
 LINK="vless://${UUID}@${IP}:${PORT}?encryption=none&security=none&type=tcp#${NODENAME}"
 
@@ -80,10 +110,14 @@ cat >/usr/local/bin/vlesslink <<EOFA
 #!/bin/bash
 UUID=\$(jq -r ".inbounds[0].settings.clients[0].id" /usr/local/etc/xray/config.json)
 PORT=\$(jq -r ".inbounds[0].port" /usr/local/etc/xray/config.json)
-IP=\$(curl -4 -s ipv4.ip.sb || curl -6 -s ipv6.ip.sb)
+IP=\$(curl -4 -s https://api.ipify.org || curl -6 -s https://api64.ipify.org)
 NAME="${NODENAME}"
+
+if [ -z "\$IP" ]; then
+  IP="YOUR_SERVER_IP"
+fi
+
 echo "vless://\${UUID}@\${IP}:\${PORT}?encryption=none&security=none&type=tcp#\${NAME}"
 EOFA
 
 chmod +x /usr/local/bin/vlesslink
-'
